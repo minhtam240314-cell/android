@@ -495,7 +495,7 @@ EOF
 cat > $PROJECT/app/src/main/res/xml/accessibility_service_config.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeViewFocusChanged|typeWindowStateChanged"
+    android:accessibilityEventTypes="typeAllMask"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
