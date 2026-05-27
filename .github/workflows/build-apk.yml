@@ -21,9 +21,32 @@ jobs:
       - name: Run build script
         run: bash build.sh
 
-      - name: Upload APK
+      - name: Generate Keystore
+        run: |
+          keytool -genkeypair \
+            -alias mstauto \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -keystore mstauto.keystore \
+            -storepass mstauto123 \
+            -keypass mstauto123 \
+            -dname "CN=MSTAutoType, OU=App, O=MSTAuto, L=HCM, S=HCM, C=VN" \
+            -noprompt
+
+      - name: Sign APK
+        run: |
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks mstauto.keystore \
+            --ks-pass pass:mstauto123 \
+            --key-pass pass:mstauto123 \
+            --ks-key-alias mstauto \
+            --out MSTAutoType-signed.apk \
+            MSTAutoType/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: MSTAutoType-debug-apk
-          path: MSTAutoType/app/build/outputs/apk/debug/app-debug.apk
+          name: MSTAutoType-SIGNED
+          path: MSTAutoType-signed.apk
           retention-days: 30
