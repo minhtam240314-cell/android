@@ -482,7 +482,7 @@ EOF
 cat > $PROJECT/app/src/main/res/values/styles.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.NoTitleBar">
+    <style name="AppTheme" parent="android:Theme.DeviceDefault.NoActionBar">
         <item name="android:colorPrimary">#FFC107</item>
         <item name="android:colorPrimaryDark">#121212</item>
         <item name="android:colorAccent">#FFC107</item>
