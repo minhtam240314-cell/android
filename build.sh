@@ -59,8 +59,8 @@ android {
         applicationId "com.mstauto"
         minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName "2.0"
+        versionCode 3
+        versionName "3.0"
     }
     buildTypes {
         release { minifyEnabled false }
@@ -87,6 +87,7 @@ cat > $PROJECT/app/src/main/AndroidManifest.xml << 'EOF'
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -108,33 +109,52 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
+
 import java.io.*;
 import java.util.*;
 
 public class MainActivity extends Activity {
 
-    private TextView tvInfo;
-    private Button btnLoadFile, btnResetAll;
-    private ListView lvMSTList;
+    private TextView  tvCurrentMST, tvCurrentLabel, tvInfo;
+    private Button    btnLoadFile, btnResetAll, btnSkip;
+    private ListView  lvMSTList;
     private MSTAdapter adapter;
 
-    private final List<MSTItem> mstItems = new ArrayList<>();
+    private final List<MSTItem> mstItems  = new ArrayList<>();
+    private int currentIndex = 0;  // con trỏ MST tiếp theo chưa copy
+
+    // Delay chuyển app (ms) — đủ để user thấy animation copy
+    private static final int SWITCH_DELAY_MS = 800;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        tvInfo       = findViewById(R.id.tvInfo);
-        btnLoadFile  = findViewById(R.id.btnLoadFile);
-        btnResetAll  = findViewById(R.id.btnResetAll);
-        lvMSTList    = findViewById(R.id.lvMSTList);
+        tvCurrentMST   = findViewById(R.id.tvCurrentMST);
+        tvCurrentLabel = findViewById(R.id.tvCurrentLabel);
+        tvInfo         = findViewById(R.id.tvInfo);
+        btnLoadFile    = findViewById(R.id.btnLoadFile);
+        btnResetAll    = findViewById(R.id.btnResetAll);
+        btnSkip        = findViewById(R.id.btnSkip);
+        lvMSTList      = findViewById(R.id.lvMSTList);
 
         adapter = new MSTAdapter();
         lvMSTList.setAdapter(adapter);
+
+        // Nhấn vào MST hiện tại (card lớn) → copy + chuyển app
+        tvCurrentMST.setOnClickListener(v -> copyCurrentAndSwitch());
+
+        // Nút bỏ qua — không copy, chuyển sang MST tiếp theo
+        btnSkip.setOnClickListener(v -> {
+            if (mstItems.isEmpty()) return;
+            advanceTo(currentIndex + 1);
+            Toast.makeText(this, "Bo qua, chuyen sang MST tiep theo", Toast.LENGTH_SHORT).show();
+        });
 
         btnLoadFile.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
@@ -146,26 +166,120 @@ public class MainActivity extends Activity {
 
         btnResetAll.setOnClickListener(v -> {
             for (MSTItem item : mstItems) item.copied = false;
+            currentIndex = 0;
             adapter.notifyDataSetChanged();
+            updateCurrentCard();
             updateInfo();
-            Toast.makeText(this, "Da reset trang thai", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Da reset ve dau danh sach", Toast.LENGTH_SHORT).show();
         });
 
+        // Nhấn 1 lần vào item trong list → copy + chuyển app
         lvMSTList.setOnItemClickListener((parent, view, position, id) -> {
-            MSTItem item = mstItems.get(position);
-            copyToClipboard(item.mst);
-            item.copied = true;
-            adapter.notifyDataSetChanged();
-            updateInfo();
-            Toast.makeText(this,
-                "Da copy: " + item.mst, Toast.LENGTH_SHORT).show();
+            currentIndex = position;
+            copyCurrentAndSwitch();
         });
+
+        updateCurrentCard();
+        updateInfo();
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == 100 && resultCode == RESULT_OK && data != null) {
+        if (requestCode == 100 && resultCode == RESULT_OK && data != null)
             loadFile(data.getData());
+    }
+
+    // ── Core logic ─────────────────────────────────────────────
+
+    /**
+     * Copy MST hiện tại vào clipboard, đánh dấu đã copy,
+     * cập nhật UI, rồi sau SWITCH_DELAY_MS chuyển về app trước.
+     */
+    private void copyCurrentAndSwitch() {
+        if (mstItems.isEmpty()) {
+            Toast.makeText(this, "Chua tai file MST!", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (currentIndex >= mstItems.size()) {
+            Toast.makeText(this, "Het danh sach! Nhan Reset de bat dau lai.",
+                Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        MSTItem item = mstItems.get(currentIndex);
+        copyToClipboard(item.mst);
+        item.copied = true;
+        adapter.notifyDataSetChanged();
+        lvMSTList.smoothScrollToPosition(currentIndex);
+
+        // Hiển thị flash xanh trên card lớn
+        tvCurrentMST.setBackgroundColor(0xFF1B5E20);
+        tvCurrentMST.setText("✓  " + item.mst);
+
+        // Tự động chuyển sang MST tiếp theo trong con trỏ
+        int nextIndex = currentIndex + 1;
+
+        // Sau delay → cập nhật card sang MST tiếp theo + chuyển app
+        new Handler().postDelayed(() -> {
+            advanceTo(nextIndex);
+            switchToPreviousApp();
+        }, SWITCH_DELAY_MS);
+    }
+
+    /** Di chuyển con trỏ đến index mới và cập nhật UI */
+    private void advanceTo(int newIndex) {
+        currentIndex = newIndex;
+        updateCurrentCard();
+        updateInfo();
+    }
+
+    /** Chuyển về app đang chạy trước đó (Recent Apps → app đầu tiên) */
+    private void switchToPreviousApp() {
+        // Dùng moveTaskToBack để đưa app này xuống nền,
+        // hệ thống sẽ hiện app đang chạy trước đó lên đầu
+        moveTaskToBack(true);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────
+
+    private void copyToClipboard(String text) {
+        ClipboardManager cm =
+            (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText("MST", text));
+    }
+
+    private void updateCurrentCard() {
+        if (mstItems.isEmpty()) {
+            tvCurrentLabel.setText("TAI FILE DE BAT DAU");
+            tvCurrentMST.setText("---");
+            tvCurrentMST.setBackgroundColor(0xFF1E1E1E);
+            tvCurrentMST.setTextColor(0xFF888888);
+            btnSkip.setVisibility(View.GONE);
+        } else if (currentIndex >= mstItems.size()) {
+            tvCurrentLabel.setText("DA DIEN HET DANH SACH");
+            tvCurrentMST.setText("Nhan Reset de bat dau lai");
+            tvCurrentMST.setBackgroundColor(0xFF1E1E1E);
+            tvCurrentMST.setTextColor(0xFF888888);
+            btnSkip.setVisibility(View.GONE);
+        } else {
+            tvCurrentLabel.setText("NHAN DE COPY VA CHUYEN APP  •  " +
+                (currentIndex + 1) + " / " + mstItems.size());
+            tvCurrentMST.setText(mstItems.get(currentIndex).mst);
+            tvCurrentMST.setBackgroundColor(0xFF0D47A1);  // xanh dương
+            tvCurrentMST.setTextColor(0xFFFFFFFF);
+            btnSkip.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void updateInfo() {
+        int total  = mstItems.size();
+        int copied = 0;
+        for (MSTItem item : mstItems) if (item.copied) copied++;
+        if (total == 0) {
+            tvInfo.setText("Chua tai file");
+        } else {
+            tvInfo.setText("Da copy: " + copied + " / " + total
+                + "   |   Con lai: " + (total - copied));
         }
     }
 
@@ -185,31 +299,14 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "File trong!", Toast.LENGTH_LONG).show();
                 return;
             }
-
+            currentIndex = 0;
             adapter.notifyDataSetChanged();
+            updateCurrentCard();
             updateInfo();
             Toast.makeText(this,
                 "Da tai " + mstItems.size() + " ma so thue", Toast.LENGTH_SHORT).show();
-
         } catch (Exception e) {
             Toast.makeText(this, "Loi: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void copyToClipboard(String text) {
-        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(ClipData.newPlainText("MST", text));
-    }
-
-    private void updateInfo() {
-        int total  = mstItems.size();
-        int copied = 0;
-        for (MSTItem item : mstItems) if (item.copied) copied++;
-        if (total == 0) {
-            tvInfo.setText("Chua tai file — nhan 'Tai file MST' de bat dau");
-        } else {
-            tvInfo.setText("Da copy: " + copied + " / " + total
-                + "   |   Con lai: " + (total - copied));
         }
     }
 
@@ -228,35 +325,42 @@ public class MainActivity extends Activity {
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            if (convertView == null) {
-                convertView = getLayoutInflater().inflate(
-                    R.layout.item_mst, parent, false);
-            }
+            if (convertView == null)
+                convertView = getLayoutInflater().inflate(R.layout.item_mst, parent, false);
 
-            MSTItem item = mstItems.get(position);
+            MSTItem item    = mstItems.get(position);
+            TextView tvNum  = convertView.findViewById(R.id.tvNumber);
+            TextView tvMST  = convertView.findViewById(R.id.tvMST);
+            TextView tvStat = convertView.findViewById(R.id.tvStatus);
+            View     root   = convertView.findViewById(R.id.itemRoot);
 
-            TextView tvNumber = convertView.findViewById(R.id.tvNumber);
-            TextView tvMST    = convertView.findViewById(R.id.tvMST);
-            TextView tvStatus = convertView.findViewById(R.id.tvStatus);
-            View     root     = convertView.findViewById(R.id.itemRoot);
-
-            tvNumber.setText(String.valueOf(position + 1));
+            tvNum.setText(String.valueOf(position + 1));
             tvMST.setText(item.mst);
 
-            if (item.copied) {
-                root.setBackgroundColor(0xFF1B5E20);   // xanh lá đậm
-                tvMST.setTextColor(0xFF69F0AE);        // xanh lá sáng
-                tvNumber.setTextColor(0xFF69F0AE);
-                tvStatus.setText("✓ Da copy");
-                tvStatus.setTextColor(0xFF69F0AE);
-            } else {
-                root.setBackgroundColor(0xFF1E1E1E);   // nền tối
-                tvMST.setTextColor(0xFFFFFFFF);        // trắng
-                tvNumber.setTextColor(0xFF888888);
-                tvStatus.setText("Nhan de copy");
-                tvStatus.setTextColor(0xFF888888);
-            }
+            boolean isCurrent = (position == currentIndex && !item.copied);
 
+            if (item.copied) {
+                // Đã copy → xanh lá
+                root.setBackgroundColor(0xFF1B5E20);
+                tvMST.setTextColor(0xFF69F0AE);
+                tvNum.setTextColor(0xFF69F0AE);
+                tvStat.setText("✓ Da copy");
+                tvStat.setTextColor(0xFF69F0AE);
+            } else if (isCurrent) {
+                // Đang chờ copy → xanh dương highlight
+                root.setBackgroundColor(0xFF0D47A1);
+                tvMST.setTextColor(0xFFFFFFFF);
+                tvNum.setTextColor(0xFFFFFFFF);
+                tvStat.setText("→ Tiep theo");
+                tvStat.setTextColor(0xFFFFFFFF);
+            } else {
+                // Chưa copy → nền tối
+                root.setBackgroundColor(0xFF1E1E1E);
+                tvMST.setTextColor(0xFFFFFFFF);
+                tvNum.setTextColor(0xFF888888);
+                tvStat.setText("Chua copy");
+                tvStat.setTextColor(0xFF888888);
+            }
             return convertView;
         }
     }
@@ -271,43 +375,89 @@ cat > $PROJECT/app/src/main/res/layout/activity_main.xml << 'EOF'
     android:layout_height="match_parent"
     android:background="#121212"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="14dp">
 
+    <!-- Tiêu đề -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="MST AutoType"
         android:textColor="#FFC107"
-        android:textSize="24sp"
+        android:textSize="22sp"
         android:textStyle="bold"
         android:gravity="center"
-        android:paddingBottom="4dp"/>
+        android:paddingBottom="10dp"/>
 
-    <TextView
+    <!-- Card MST hiện tại — to, dễ nhấn -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Nhan vao MST de copy, sau do dan vao ung dung khac"
-        android:textColor="#888888"
-        android:textSize="13sp"
-        android:gravity="center"
-        android:paddingBottom="12dp"/>
-
-    <TextView
-        android:id="@+id/tvInfo"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Chua tai file"
-        android:textColor="#FFFFFF"
-        android:textSize="13sp"
-        android:padding="12dp"
+        android:orientation="vertical"
         android:background="#1E1E1E"
-        android:layout_marginBottom="12dp"/>
+        android:padding="14dp"
+        android:layout_marginBottom="10dp">
 
+        <TextView
+            android:id="@+id/tvCurrentLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="TAI FILE DE BAT DAU"
+            android:textColor="#888888"
+            android:textSize="11sp"
+            android:paddingBottom="6dp"/>
+
+        <!-- MST lớn — nhấn vào để copy + chuyển app -->
+        <TextView
+            android:id="@+id/tvCurrentMST"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="---"
+            android:textColor="#888888"
+            android:textSize="38sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:padding="18dp"
+            android:background="#1E1E1E"
+            android:clickable="true"
+            android:focusable="true"/>
+
+    </LinearLayout>
+
+    <!-- Thống kê + nút Skip -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
+        android:layout_marginBottom="10dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvInfo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Chua tai file"
+            android:textColor="#AAAAAA"
+            android:textSize="13sp"/>
+
+        <Button
+            android:id="@+id/btnSkip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Bo qua ›"
+            android:backgroundTint="#37474F"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:visibility="gone"/>
+
+    </LinearLayout>
+
+    <!-- Nút tải file + reset -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="10dp">
 
         <Button
             android:id="@+id/btnLoadFile"
@@ -324,19 +474,22 @@ cat > $PROJECT/app/src/main/res/layout/activity_main.xml << 'EOF'
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Reset mau"
+            android:text="Reset dau"
             android:backgroundTint="#37474F"
             android:textColor="#FFFFFF"/>
+
     </LinearLayout>
 
+    <!-- Nhãn list -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="DANH SACH MA SO THUE"
+        android:text="DANH SACH  (nhan de copy va chuyen app)"
         android:textColor="#888888"
         android:textSize="11sp"
         android:paddingBottom="6dp"/>
 
+    <!-- Danh sách MST -->
     <ListView
         android:id="@+id/lvMSTList"
         android:layout_width="match_parent"
@@ -356,16 +509,16 @@ cat > $PROJECT/app/src/main/res/layout/item_mst.xml << 'EOF'
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
-    android:padding="14dp"
+    android:padding="12dp"
     android:gravity="center_vertical"
     android:background="#1E1E1E">
 
     <TextView
         android:id="@+id/tvNumber"
-        android:layout_width="40dp"
+        android:layout_width="36dp"
         android:layout_height="wrap_content"
         android:textColor="#888888"
-        android:textSize="13sp"
+        android:textSize="12sp"
         android:text="1"/>
 
     <TextView
@@ -374,7 +527,7 @@ cat > $PROJECT/app/src/main/res/layout/item_mst.xml << 'EOF'
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:textColor="#FFFFFF"
-        android:textSize="20sp"
+        android:textSize="18sp"
         android:textStyle="bold"
         android:text="0100109106"/>
 
@@ -383,13 +536,13 @@ cat > $PROJECT/app/src/main/res/layout/item_mst.xml << 'EOF'
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textColor="#888888"
-        android:textSize="12sp"
-        android:text="Nhan de copy"/>
+        android:textSize="11sp"
+        android:text="Chua copy"/>
 
 </LinearLayout>
 EOF
 
-# ── strings.xml ──────────────────────────────────────────────
+# ── strings + styles ─────────────────────────────────────────
 cat > $PROJECT/app/src/main/res/values/strings.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -397,7 +550,6 @@ cat > $PROJECT/app/src/main/res/values/strings.xml << 'EOF'
 </resources>
 EOF
 
-# ── styles.xml ───────────────────────────────────────────────
 cat > $PROJECT/app/src/main/res/values/styles.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -410,7 +562,7 @@ cat > $PROJECT/app/src/main/res/values/styles.xml << 'EOF'
 </resources>
 EOF
 
-# ── icons ─────────────────────────────────────────────────────
+# ── Icons ─────────────────────────────────────────────────────
 cat > $PROJECT/app/src/main/res/drawable/ic_launcher_background.xml << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
@@ -446,7 +598,7 @@ cp $PROJECT/app/src/main/res/mipmap-$d/ic_launcher.xml \
    $PROJECT/app/src/main/res/mipmap-$d/ic_launcher_round.xml
 done
 
-# ── Download gradle wrapper ───────────────────────────────────
+# ── Gradle wrapper ────────────────────────────────────────────
 echo "==> Tai gradle wrapper..."
 curl -sL "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
     -o $PROJECT/gradle/wrapper/gradle-wrapper.jar
@@ -463,8 +615,7 @@ cd $PROJECT
 APK="app/build/outputs/apk/debug/app-debug.apk"
 if [ -f "$APK" ]; then
     echo "================================================"
-    echo "  BUILD THANH CONG!"
-    echo "  APK: $PROJECT/$APK"
+    echo "  BUILD THANH CONG! v3.0"
     echo "================================================"
 else
     echo "BUILD THAT BAI"; exit 1
